@@ -1,24 +1,25 @@
 #!/usr/bin/env python3
 """
-legal_decision_negative_cases.py
+extract_negative_treatments.py
 
 A Python module that:
-- Takes a slug string as input.
-- Constructs a URL using the slug to retrieve the HTML of a legal decision.
+- Takes an integer id as input.
+- Constructs a URL using the id to retrieve the HTML of a legal decision.
 - Uses the OpenAI ChatGPT SDK to prompt the LLM to find referenced cases that have been treated negatively.
 - Summarizes the results into a JSON structure.
 
 Usage:
-    python legal_decision_negative_cases.py <slug>
+    python extract_negative_treatments.py <id>
 """
 
 import sys
-import json
+import os
 import requests
 from bs4 import BeautifulSoup
 import openai
 from openai import OpenAI
-import os
+
+model = os.getenv("CHAT_GPT_MODEL", "gpt-3.5-turbo")
 
 # Ensure your OpenAI API key is set in the environment variable OPENAI_API_KEY.
 openai.api_key = os.getenv("OPENAI_API_KEY")
@@ -26,55 +27,29 @@ if openai.api_key is None:
     value = input(f"OPENAI_API_KEY is not set. Please enter your OpenAI API key: ")
     openai.api_key = value
 
-def fetch_legal_decision(slug: str) -> str:
+def fetch_opinion(id: int) -> str:
     """
-    Fetches and returns the text content from the legal decision HTML at the given slug.
+    Fetches and returns the text content from the legal decision HTML with the given id.
     
     Args:
-        slug (str): The slug to be inserted into the URL.
+        id (int): The id to be passed into the query.
     
     Returns:
         str: The extracted legal decision text.
     """
-    url = f"https://casetext/{slug}/html"
+    url = f"https://scholar.google.com/scholar_case?case={id}"
     response = requests.get(url)
     response.raise_for_status()
 
     # Parse the HTML using BeautifulSoup to extract visible text.
-    soup = BeautifulSoup(response.text, 'html.parser')
+    soup = BeautifulSoup(response.content, 'html.parser')
     
     # You can customize the extraction according to the structure of the page.
     # For now, we'll simply extract all text.
     opinion_text = soup.get_text(separator="\n", strip=True)
     return opinion_text
 
-
-def get_file_by_slug(slug: str) -> str:
-    """
-    Selects an HTML file from the 'test_data' directory whose filename (excluding the .html suffix) matches the provided slug.
-    
-    Args:
-        slug (str): The slug to match against the filename.
-    
-    Returns:
-        str: The path to the matching HTML file.
-    """
-    test_data_dir = "test_data"
-    
-    if not os.path.exists(test_data_dir) or not os.path.isdir(test_data_dir):
-        sys.exit(f"Error: The directory '{test_data_dir}' does not exist or is not a directory.")
-    
-    # Construct the expected filename.
-    expected_file = f"{slug}.html"
-    file_path = os.path.join(test_data_dir, expected_file)
-    
-    if not os.path.exists(file_path):
-        sys.exit(f"Error: No HTML file matching slug '{slug}' found in '{test_data_dir}'.")
-    
-    return file_path
-
-
-def get_negative_treatments(opinion_text: str) -> list:
+def get_negative_treatments(opinion_text: str) -> str:
     """
     Uses the OpenAI ChatGPT API to analyze a legal decision text and extract
     a list of referenced cases that have been treated negatively.
@@ -83,7 +58,7 @@ def get_negative_treatments(opinion_text: str) -> list:
         opinion_text (str): The legal decision text.
     
     Returns:
-        list: A list of cases (as strings) that have negative treatment.
+        str: A JSON list of information on cases that have negative treatment.
     """
     # Prepare the prompt for the ChatGPT model.
     prompt = (
@@ -92,7 +67,7 @@ def get_negative_treatments(opinion_text: str) -> list:
         "Below is the text of a legal opinion that references other cases."
         "DO NOT CONSIDER THE OPINION ITSELF AS A REFERENCED CASE AND DO NOT RETURN IT IN THE RESULTS."
         "Identify any of the referenced cases that are treated negatively in the opinion."
-        "For each of such cases, determine the nature of the treatment, quote the text of the negative treatment, and give an explanation of why the treatment is negative."
+        "For each of such cases, determine the nature of the treatment, quote the text of the negative treatment, and give an explanation of why the treatment was determined to be negative."
         "If there are cases that are treated negatively, return a JSON encoded list where each negatively-treated case is a JSON object with the following keys: ['caseName', 'jurisdiction', 'citation', 'nature', 'quotedText', 'explanation']."
         "If there are no cases treated negatively, respond EXACTLY with '[]'."
         "\n"
@@ -103,7 +78,7 @@ def get_negative_treatments(opinion_text: str) -> list:
         client = OpenAI()
 
         response = client.responses.create(
-            model="gpt-3.5-turbo",
+            model=model,
             input=[
                 {"role": "system", "content": "You are a helpful lawyer."},
                 {"role": "system", "content": "Your response will consist ONLY of a list."},
@@ -119,34 +94,16 @@ def get_negative_treatments(opinion_text: str) -> list:
 
     return response.output_text
 
-
-def extract_text_from_html(file_path: str) -> str:
-    """
-    Reads an HTML file and extracts the visible text using BeautifulSoup.
-    
-    Args:
-        file_path (str): The path to the HTML file.
-    
-    Returns:
-        str: The extracted text content.
-    """
-    with open(file_path, "r", encoding="utf8") as f:
-        html_content = f.read()
-    
-    soup = BeautifulSoup(html_content, "html.parser")
-    text = soup.get_text(separator="\n", strip=True)
-    return text
-
-def main(slug: str):
-    print(f"Fetching legal decision text for slug: {slug}")
-    file = get_file_by_slug(slug)
-    opinion_text = extract_text_from_html(file)
+def main(id: int):
+    print(f"Fetching legal decision text with id: {id}")
+    opinion_text = fetch_opinion(id)
     
     print("Analyzing legal decision for negative case treatment using ChatGPT...")
     treatments = get_negative_treatments(opinion_text)
 
     if treatments == "[]":
-        print("NO NEGATVIELY-TREATED CASES FOUND!")
+        print("NO NEGATIVELY-TREATED CASES FOUND!")
+        f.write("")
         return
     else:
         with open("results.json", "w") as f:
@@ -156,9 +113,11 @@ def main(slug: str):
         print(treatments)
         return
 
+
 if __name__ == "__main__":
     if len(sys.argv) != 2:
-        print("Usage: python legal_decision_negative_cases.py <slug>")
+        print("Usage: python extract_negative_treatments.py <id>")
         sys.exit(1)
-    slug_input = sys.argv[1]
-    main(slug_input)
+
+    id = sys.argv[1]
+    main(id)
